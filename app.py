@@ -42,6 +42,10 @@ INITIAL_FAMILIES = [
 ]
 
 
+# -----------------------------
+# Dados
+# -----------------------------
+
 def family_label(index, names):
     first_name = names[0] if names else f"Família {index}"
     return f"Família {first_name}"
@@ -60,7 +64,7 @@ def new_guest(name="", family="", favorite=False):
     return {
         "id": str(uuid.uuid4()),
         "name": name,
-        "family": family,
+        "family": display_family_name(family or "Sem família"),
         "favorite": favorite,
         "status": "Pendente",
         "side": "Noiva",
@@ -84,7 +88,7 @@ def normalize_guest(item):
     return {
         "id": item.get("id", str(uuid.uuid4())),
         "name": item.get("name", ""),
-        "family": item.get("family", "Sem família"),
+        "family": display_family_name(item.get("family", "Sem família")),
         "favorite": favorite,
         "status": item.get("status", "Pendente"),
         "side": item.get("side", "Noiva"),
@@ -109,6 +113,56 @@ def save_data():
         json.dumps({"guests": st.session_state.guests}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def update_guest(guest_id, field, value):
+    for guest in st.session_state.guests:
+        if guest["id"] == guest_id:
+            guest[field] = value
+            break
+    save_data()
+
+
+def remove_guest(guest_id):
+    st.session_state.guests = [
+        guest for guest in st.session_state.guests if guest["id"] != guest_id
+    ]
+    if st.session_state.get("selected_guest_id") == guest_id:
+        st.session_state.selected_guest_id = None
+    if st.session_state.get("editing_guest_id") == guest_id:
+        st.session_state.editing_guest_id = None
+    save_data()
+
+
+def add_guest_from_inputs():
+    name = st.session_state.get("new_guest_name", "").strip()
+    family = st.session_state.get("new_guest_family", "").strip() or "Sem família"
+    side = st.session_state.get("new_guest_side", "Noiva")
+    if not name:
+        return
+    guest = new_guest(name, family)
+    guest["side"] = side
+    st.session_state.guests.insert(0, guest)
+    st.session_state.new_guest_name = ""
+    save_data()
+
+
+def add_guest_to_family(family, input_key):
+    name = st.session_state.get(input_key, "").strip()
+    if not name:
+        return
+    st.session_state.guests.insert(0, new_guest(name, display_family_name(family)))
+    st.session_state[input_key] = ""
+    save_data()
+
+
+def rename_family(old_family, new_family):
+    new_family = display_family_name((new_family or "").strip() or "Sem família")
+    for guest in st.session_state.guests:
+        if family_matches(guest, old_family):
+            guest["family"] = new_family
+    st.session_state.selected_family = new_family
+    save_data()
 
 
 def import_xlsx(path):
@@ -144,49 +198,18 @@ def import_xlsx(path):
     save_data()
 
 
-def update_guest(guest_id, field, value):
-    for guest in st.session_state.guests:
-        if guest["id"] == guest_id:
-            guest[field] = value
-            break
-    save_data()
-
-
-def remove_guest(guest_id):
-    st.session_state.guests = [
-        guest for guest in st.session_state.guests if guest["id"] != guest_id
-    ]
-    if st.session_state.get("selected_guest_id") == guest_id:
-        st.session_state.selected_guest_id = None
-    if st.session_state.get("editing_guest_id") == guest_id:
-        st.session_state.editing_guest_id = None
-    save_data()
-
-
-def add_guest():
-    st.session_state.guests.insert(0, new_guest("", "Sem família"))
-    save_data()
-
-
-def add_guest_from_inputs():
-    name = st.session_state.get("new_guest_name", "").strip()
-    family = st.session_state.get("new_guest_family", "").strip() or "Sem família"
-    side = st.session_state.get("new_guest_side", "Noiva")
-    if not name:
-        return
-    guest = new_guest(name, family)
-    guest["side"] = side
-    st.session_state.guests.insert(0, guest)
-    st.session_state.new_guest_name = ""
-    save_data()
-
-
 def csv_bytes():
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["nome", "familia", "favorito"])
+    writer.writerow(["nome", "familia", "favorito", "status", "lado"])
     for guest in st.session_state.guests:
-        writer.writerow([guest["name"], guest["family"], "sim" if guest["favorite"] else "nao"])
+        writer.writerow([
+            guest["name"],
+            guest["family"],
+            "sim" if guest["favorite"] else "nao",
+            guest.get("status", "Pendente"),
+            guest.get("side", "Noiva"),
+        ])
     return buffer.getvalue().encode("utf-8-sig")
 
 
@@ -211,169 +234,50 @@ def family_matches(guest, family):
     return current == display_family_name(family)
 
 
-def rename_family(old_family, new_family):
-    new_family = display_family_name((new_family or "").strip() or "Sem família")
-    for guest in st.session_state.guests:
-        if family_matches(guest, old_family):
-            guest["family"] = new_family
-    st.session_state.selected_family = new_family
-    save_data()
+def find_guest(guest_id):
+    return next((guest for guest in st.session_state.guests if guest["id"] == guest_id), None)
 
 
-def add_guest_to_family(family, input_key):
-    name = st.session_state.get(input_key, "").strip()
-    if not name:
-        return
-    st.session_state.guests.insert(0, new_guest(name, display_family_name(family)))
-    st.session_state[input_key] = ""
-    save_data()
+# -----------------------------
+# Navegação / query params
+# -----------------------------
+
+def qp_value(name, default=None):
+    value = st.query_params.get(name, default)
+    if isinstance(value, list):
+        return value[0] if value else default
+    return value
 
 
-def render_family_editor(family):
-    safe_family = html.escape(display_family_name(family))
-    key = stable_key(family)
-    members = [guest for guest in st.session_state.guests if family_matches(guest, family)]
-
-    with st.container(border=True):
-        st.markdown(
-            f"""
-            <div class="family-editor-title">Editar {safe_family}</div>
-            <div class="family-editor-sub">Altere o nome da família, adicione pessoas ou edite os convidados desse núcleo.</div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        name_cols = st.columns([3, 1], vertical_alignment="bottom")
-        new_family_name = name_cols[0].text_input(
-            "Nome da família",
-            value=display_family_name(family),
-            key=f"family_rename_{key}",
-            placeholder="Ex.: Família Costa",
-        )
-        if name_cols[1].button("Salvar", key=f"save_family_{key}", type="primary", use_container_width=True):
-            rename_family(family, new_family_name)
-            st.rerun()
-
-        add_key = f"family_add_guest_{key}"
-        add_cols = st.columns([3, 1], vertical_alignment="bottom")
-        add_cols[0].text_input(
-            "Adicionar convidado nesta família",
-            key=add_key,
-            placeholder="Nome do convidado",
-        )
-        if add_cols[1].button("Adicionar", key=f"add_to_family_{key}", use_container_width=True):
-            add_guest_to_family(family, add_key)
-            st.rerun()
-
-        st.markdown(f"<div class='section-kicker'>{len(members)} convidados nesta família</div>", unsafe_allow_html=True)
-        for guest in members:
-            guest_row(guest, compact=True)
-
-        if st.button("Fechar edição", key=f"close_family_{key}", use_container_width=True):
-            st.session_state.selected_family = None
-            st.session_state.editing_guest_id = None
-            st.session_state.selected_guest_id = None
-            st.rerun()
+def build_url(page, **params):
+    query = {"page": page}
+    for key, value in params.items():
+        if value is not None:
+            query[key] = value
+    return "?" + urllib.parse.urlencode(query)
 
 
-def guest_row(guest, compact=False):
-    selected = st.session_state.get("selected_guest_id") == guest["id"]
-    editing = st.session_state.get("editing_guest_id") == guest["id"]
-    family_name = display_family_name(guest["family"].strip() or "Sem família")
-
-    with st.container(border=True):
-        if editing:
-            cols = st.columns([0.45, 2.1, 1.7, 1.25, 1.15, 0.45, 0.45], vertical_alignment="bottom")
-        elif selected:
-            cols = st.columns([2.5, 2, 1.15, 1, 0.45, 0.45], vertical_alignment="center")
-        else:
-            cols = st.columns([2.5, 2, 1.15, 1, 0.45], vertical_alignment="center")
-
-        if editing:
-            star = "★" if guest["favorite"] else "☆"
-            if cols[0].button(star, key=f"fav_edit_{guest['id']}", help="Marcar favorito"):
-                update_guest(guest["id"], "favorite", not guest["favorite"])
-                st.rerun()
-
-            name = cols[1].text_input(
-                "Nome",
-                value=guest["name"],
-                key=f"name_{guest['id']}",
-                placeholder="Nome do convidado",
-                label_visibility="collapsed",
-            )
-            family = cols[2].text_input(
-                "Família",
-                value=display_family_name(guest["family"]),
-                key=f"family_{guest['id']}",
-                placeholder="Família",
-                label_visibility="collapsed",
-            )
-            status = cols[3].selectbox(
-                "Status",
-                ["Confirmado", "Pendente"],
-                index=["Confirmado", "Pendente"].index(guest.get("status", "Pendente")),
-                key=f"status_{guest['id']}",
-                label_visibility="collapsed",
-            )
-            side = cols[4].selectbox(
-                "Lado",
-                ["Noiva", "Noivo"],
-                index=["Noiva", "Noivo"].index(guest.get("side", "Noiva")),
-                key=f"side_{guest['id']}",
-                label_visibility="collapsed",
-            )
-            if name != guest["name"]:
-                update_guest(guest["id"], "name", name)
-            if family != guest["family"]:
-                update_guest(guest["id"], "family", family)
-            if status != guest.get("status", "Pendente"):
-                update_guest(guest["id"], "status", status)
-            if side != guest.get("side", "Noiva"):
-                update_guest(guest["id"], "side", side)
-
-            if cols[5].button("✓", key=f"done_{guest['id']}", help="Concluir edição"):
-                st.session_state.editing_guest_id = None
-                st.rerun()
-            if cols[6].button("X", key=f"remove_edit_{guest['id']}", help="Remover"):
-                remove_guest(guest["id"])
-                st.rerun()
-        else:
-            name = guest["name"].strip() or "Sem nome"
-            family = family_name
-            if cols[0].button(
-                f"○  {name}",
-                key=f"select_{guest['id']}",
-                help="Mostrar ações",
-                use_container_width=True,
-            ):
-                st.session_state.selected_guest_id = (
-                    None if selected else guest["id"]
-                )
-                st.session_state.editing_guest_id = None
-                st.rerun()
-
-            cols[1].markdown(f"<span class='muted-cell'>☷ {family}</span>", unsafe_allow_html=True)
-            status = guest.get("status", "Pendente")
-            status_class = "status-ok" if status == "Confirmado" else "status-favorite"
-            cols[2].markdown(f"<span class='{status_class}'>{status}</span>", unsafe_allow_html=True)
-            side_class = "status-bride" if guest.get("side", "Noiva") == "Noiva" else "status-groom"
-            cols[3].markdown(f"<span class='{side_class}'>{guest.get('side', 'Noiva')}</span>", unsafe_allow_html=True)
-
-            if selected:
-                if cols[4].button("⋯", key=f"edit_{guest['id']}", help="Editar"):
-                    st.session_state.editing_guest_id = guest["id"]
-                    st.rerun()
-                if cols[5].button("🗑", key=f"remove_{guest['id']}", help="Remover"):
-                    remove_guest(guest["id"])
-                    st.rerun()
-            else:
-                if cols[4].button("⋯", key=f"menu_{guest['id']}", help="Editar"):
-                    st.session_state.selected_guest_id = guest["id"]
-                    st.session_state.editing_guest_id = guest["id"]
-                    st.rerun()
+def set_page(page):
+    st.session_state.page = page
+    st.session_state.selected_guest_id = None
+    st.session_state.editing_guest_id = None
+    st.session_state.selected_family = None
+    st.query_params.clear()
+    st.query_params["page"] = page
 
 
+def clear_detail_params():
+    st.session_state.selected_guest_id = None
+    st.session_state.editing_guest_id = None
+    st.session_state.selected_family = None
+    current_page = st.session_state.page
+    st.query_params.clear()
+    st.query_params["page"] = current_page
+
+
+# -----------------------------
+# Componentes visuais
+# -----------------------------
 
 def render_header(title, subtitle, icon):
     st.markdown(
@@ -415,41 +319,168 @@ def render_family_stats(family_count, total_guests):
     )
 
 
+def render_guest_card(guest, page="Convidados"):
+    name = html.escape(guest["name"].strip() or "Sem nome")
+    family = html.escape(display_family_name(guest.get("family", "Sem família")))
+    href = html.escape(build_url(page, edit=guest["id"]))
+    favorite_badge = '<span class="mini-badge">Padrinho</span>' if guest.get("favorite") else ""
+    st.markdown(
+        f"""
+        <a class="guest-card-link" target="_self" href="{href}">
+            <div class="guest-card">
+                <div class="guest-avatar">♡</div>
+                <div class="guest-copy">
+                    <div class="guest-name">{name}</div>
+                    <div class="guest-family">{family}</div>
+                </div>
+                {favorite_badge}
+                <div class="guest-chevron">›</div>
+            </div>
+        </a>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_family_row(family, values):
     safe_family = html.escape(display_family_name(family))
     total = int(values.get("total", 0))
     favoritos = int(values.get("favorites", 0))
     plural = "convidado" if total == 1 else "convidados"
     fav_text = f" · {favoritos} favorito" if favoritos == 1 else (f" · {favoritos} favoritos" if favoritos else "")
+    href = html.escape(build_url("Famílias", family=display_family_name(family)))
     st.markdown(
         f"""
-        <div class="family-row family-row-mobile">
-            <div class="family-left">
-                <div class="family-avatar">👥</div>
-                <div class="family-copy">
-                    <div class="family-name">{safe_family}</div>
-                    <div class="family-sub">{total} {plural}{fav_text}</div>
+        <a class="guest-card-link" target="_self" href="{href}">
+            <div class="family-row family-row-mobile">
+                <div class="family-left">
+                    <div class="family-avatar">👥</div>
+                    <div class="family-copy">
+                        <div class="family-name">{safe_family}</div>
+                        <div class="family-sub">{total} {plural}{fav_text}</div>
+                    </div>
+                </div>
+                <div class="family-right">
+                    <div class="pill">{total}</div>
+                    <div class="chevron">›</div>
                 </div>
             </div>
-            <div class="family-right">
-                <div class="pill">{total}</div>
-                <div class="chevron">›</div>
-            </div>
-        </div>
+        </a>
         """,
         unsafe_allow_html=True,
     )
 
 
-def nav_href(page):
-    return "?" + urllib.parse.urlencode({"page": page})
+def render_guest_editor_panel(guest, title="Editar convidado", family_locked=False):
+    if not guest:
+        return
+
+    form_key = f"edit_form_{guest['id']}"
+    with st.container(border=True):
+        st.markdown(
+            f"""
+            <div class="editor-title">{html.escape(title)}</div>
+            <div class="editor-sub">Altere os dados e salve. Nada abre em outra aba.</div>
+            """,
+            unsafe_allow_html=True,
+        )
+        with st.form(form_key):
+            name = st.text_input("Nome", value=guest.get("name", ""), key=f"form_name_{guest['id']}")
+            family = st.text_input(
+                "Família",
+                value=display_family_name(guest.get("family", "Sem família")),
+                key=f"form_family_{guest['id']}",
+                disabled=family_locked,
+            )
+            col_a, col_b = st.columns(2)
+            status_options = ["Pendente", "Confirmado"]
+            side_options = ["Noiva", "Noivo"]
+            status = col_a.selectbox(
+                "Status",
+                status_options,
+                index=status_options.index(guest.get("status", "Pendente")) if guest.get("status", "Pendente") in status_options else 0,
+                key=f"form_status_{guest['id']}",
+            )
+            side = col_b.selectbox(
+                "Lado",
+                side_options,
+                index=side_options.index(guest.get("side", "Noiva")) if guest.get("side", "Noiva") in side_options else 0,
+                key=f"form_side_{guest['id']}",
+            )
+            favorite = st.toggle("Marcar como padrinho/madrinha", value=bool(guest.get("favorite")), key=f"form_fav_{guest['id']}")
+            submitted = st.form_submit_button("Salvar alterações", type="primary", use_container_width=True)
+
+        action_cols = st.columns(2)
+        if action_cols[0].button("Fechar", key=f"close_editor_{guest['id']}", use_container_width=True):
+            clear_detail_params()
+            st.rerun()
+        if action_cols[1].button("Remover", key=f"remove_editor_{guest['id']}", use_container_width=True):
+            remove_guest(guest["id"])
+            clear_detail_params()
+            st.rerun()
+
+        if submitted:
+            guest["name"] = name.strip()
+            if not family_locked:
+                guest["family"] = display_family_name(family.strip() or "Sem família")
+            guest["status"] = status
+            guest["side"] = side
+            guest["favorite"] = favorite
+            save_data()
+            clear_detail_params()
+            st.success("Alterações salvas.")
+            st.rerun()
 
 
-def set_page(page):
-    st.session_state.page = page
-    st.session_state.selected_guest_id = None
-    st.session_state.editing_guest_id = None
-    st.query_params["page"] = page
+def render_family_editor(family):
+    family = display_family_name(family)
+    key = stable_key(family)
+    members = [guest for guest in st.session_state.guests if family_matches(guest, family)]
+    editing_guest = find_guest(st.session_state.get("editing_guest_id"))
+
+    with st.container(border=True):
+        st.markdown(
+            f"""
+            <div class="editor-title">{html.escape(family)}</div>
+            <div class="editor-sub">Edite o núcleo familiar, adicione pessoas ou toque em um convidado para alterar.</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        new_family_name = st.text_input(
+            "Nome da família",
+            value=family,
+            key=f"family_rename_{key}",
+            placeholder="Ex.: Família Costa",
+        )
+        rename_cols = st.columns(2)
+        if rename_cols[0].button("Salvar nome da família", key=f"save_family_{key}", type="primary", use_container_width=True):
+            rename_family(family, new_family_name)
+            st.query_params.clear()
+            st.query_params["page"] = "Famílias"
+            st.query_params["family"] = display_family_name(new_family_name)
+            st.rerun()
+        if rename_cols[1].button("Fechar edição", key=f"close_family_{key}", use_container_width=True):
+            clear_detail_params()
+            st.rerun()
+
+        add_key = f"family_add_guest_{key}"
+        add_cols = st.columns([2.2, 1], vertical_alignment="bottom")
+        add_cols[0].text_input(
+            "Adicionar pessoa",
+            key=add_key,
+            placeholder="Nome do convidado",
+        )
+        if add_cols[1].button("Adicionar", key=f"add_to_family_{key}", use_container_width=True):
+            add_guest_to_family(family, add_key)
+            st.rerun()
+
+        st.markdown(f"<div class='section-kicker'>{len(members)} convidados nesta família</div>", unsafe_allow_html=True)
+        if editing_guest and family_matches(editing_guest, family):
+            render_guest_editor_panel(editing_guest, "Editar convidado da família", family_locked=True)
+
+        for guest in members:
+            render_guest_card(guest, page="Famílias")
 
 
 def render_bottom_nav(active_page):
@@ -472,6 +503,9 @@ def render_bottom_nav(active_page):
             st.rerun()
 
 
+# -----------------------------
+# Configuração visual
+# -----------------------------
 st.set_page_config(page_title="Lista do casamento", layout="wide")
 
 st.markdown(
@@ -481,11 +515,12 @@ st.markdown(
     :root {
         --rose: #c77d75;
         --rose-dark: #b86d66;
-        --rose-light: #f7ece9;
+        --rose-soft: #e2aaa1;
+        --rose-light: #f8eeee;
         --ink: #171827;
         --muted: #858891;
         --line: #eadfda;
-        --card: rgba(255, 255, 255, 0.90);
+        --card: rgba(255, 255, 255, 0.92);
         --wash: #fbf6f2;
         --shadow: 0 18px 46px rgba(72, 41, 35, 0.08);
     }
@@ -497,23 +532,17 @@ st.markdown(
     }
     .block-container {
         padding: 2.2rem 2.1rem 5.8rem;
-        max-width: 1340px;
+        max-width: 1180px;
     }
     section[data-testid="stSidebar"] {
-        background:
-            radial-gradient(circle at 45% 10%, rgba(199, 125, 117, 0.1), transparent 32%),
-            rgba(255, 251, 248, 0.96);
+        background: rgba(255, 251, 248, 0.96);
         border-right: 1px solid var(--line);
-    }
-    section[data-testid="stSidebar"] .block-container {
-        padding: 2.1rem 1.1rem;
     }
     h1, .app-title {
         color: var(--rose);
         font-family: 'Playfair Display', Georgia, serif;
-        font-size: clamp(2.45rem, 7vw, 4.35rem);
+        font-size: clamp(2.55rem, 7vw, 4.35rem);
         line-height: 0.95;
-        letter-spacing: 0;
         margin: 0;
     }
     h2, h3, p, label, div, span, input, button, a {
@@ -524,151 +553,59 @@ st.markdown(
         align-items: flex-start;
         justify-content: space-between;
         gap: 1rem;
-        margin-bottom: 1.05rem;
+        margin-bottom: 1.15rem;
     }
     .app-subtitle,
     [data-testid="stCaptionContainer"] {
         color: var(--muted);
-        font-size: 1.02rem;
+        font-size: 1.03rem;
         margin-top: 0.55rem;
     }
     .header-icon {
-        display: none;
         color: var(--rose);
-        font-size: 1.55rem;
+        font-size: 1.65rem;
         line-height: 1;
-        padding-top: 0.4rem;
+        padding-top: 0.45rem;
         opacity: 0.95;
     }
-    div[data-testid="stMetric"] {
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        box-shadow: var(--shadow);
-        padding: 14px 16px;
+    input, textarea, [data-baseweb="select"] > div {
+        border-radius: 14px !important;
     }
-    div[data-testid="stMetricValue"] {
-        color: var(--ink);
-        font-family: 'Playfair Display', Georgia, serif;
-    }
-    div[data-testid="stVerticalBlockBorderWrapper"] {
-        border-color: var(--line);
-        border-radius: 16px;
-        background: var(--card);
-        box-shadow: 0 10px 25px rgba(72, 41, 35, 0.06);
-    }
-    .stButton button {
-        border-radius: 12px;
-        min-height: 42px;
+    .stButton button,
+    .stDownloadButton button,
+    .stFormSubmitButton button {
+        border-radius: 14px;
+        min-height: 44px;
         border-color: var(--line);
         color: var(--rose-dark);
         background: rgba(255, 255, 255, 0.9);
-        font-weight: 600;
+        font-weight: 650;
     }
-    .stButton button[kind="primary"], .stDownloadButton button {
+    .stButton button[kind="primary"],
+    .stDownloadButton button,
+    .stFormSubmitButton button[kind="primary"] {
         background: linear-gradient(135deg, #dca8a0, #c8746f);
         border: 0;
         color: #fff;
     }
-    div[data-testid="stVerticalBlockBorderWrapper"] .stButton button {
-        justify-content: flex-start;
-        background: transparent;
-        border: 0;
-        color: var(--ink);
-        font-weight: 600;
-        box-shadow: none;
-    }
-    div[data-testid="stVerticalBlockBorderWrapper"] .stButton button:hover {
-        background: rgba(199, 125, 117, 0.08);
-        color: var(--rose-dark);
-    }
-    .muted-cell {
-        display: inline-flex;
-        align-items: center;
-        min-height: 42px;
-        color: var(--muted);
-        font-size: 0.95rem;
-    }
-    .qty-pill {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 58px;
-        min-height: 34px;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        color: var(--ink);
-        background: rgba(255, 255, 255, 0.74);
-        font-weight: 600;
-    }
-    .status-ok,
-    .status-favorite,
-    .status-bride,
-    .status-groom {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 30px;
-        padding: 0 0.8rem;
-        border-radius: 10px;
-        font-weight: 600;
-        font-size: 0.86rem;
-    }
-    .status-ok {
-        color: #427247;
-        background: #eaf4e8;
-        border: 1px solid #d7ead3;
-    }
-    .status-favorite {
-        color: #b46b1f;
-        background: #fff0db;
-        border: 1px solid #f3dec0;
-    }
-    .status-bride {
-        color: #9f5f87;
-        background: #fbecf5;
-        border: 1px solid #efd4e4;
-    }
-    .status-groom {
-        color: #4d638d;
-        background: #edf2fb;
-        border: 1px solid #d7e0f2;
-    }
-    .table-card {
-        border: 1px solid var(--line);
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        border-color: var(--line);
         border-radius: 18px;
-        background: rgba(255, 255, 255, 0.78);
+        background: var(--card);
+        box-shadow: 0 10px 25px rgba(72, 41, 35, 0.06);
+    }
+    .hero-card, .soft-card, .stats-card {
+        border: 1px solid var(--line);
+        background: var(--card);
+        border-radius: 20px;
         box-shadow: var(--shadow);
-        padding: 0.9rem;
-        margin-top: 1rem;
-    }
-    .table-header {
-        color: var(--muted);
-        font-size: 0.78rem;
-        font-weight: 700;
-        letter-spacing: .04em;
-        text-transform: uppercase;
-        padding: 0.55rem 0.5rem 0.8rem;
-        border-bottom: 1px solid var(--line);
-        margin-bottom: 0.55rem;
-    }
-    input {
-        border-radius: 14px !important;
     }
     .hero-card {
-        border: 1px solid var(--line);
-        background: var(--card);
-        border-radius: 18px;
-        padding: 1rem;
-        box-shadow: var(--shadow);
-        margin: 1.15rem 0 1.05rem;
+        padding: 1.15rem;
+        margin: 1.25rem 0 1.15rem;
     }
-    .soft-card, .stats-card {
-        border: 1px solid var(--line);
-        background: var(--card);
-        border-radius: 18px;
-        padding: 1.1rem 1.2rem;
-        box-shadow: var(--shadow);
+    .soft-card {
+        padding: 1.2rem 1.3rem;
         margin: 1.1rem 0 1.2rem;
     }
     .stats-card {
@@ -677,23 +614,20 @@ st.markdown(
         justify-content: space-around;
         gap: 1rem;
         min-height: 112px;
+        padding: 1.1rem 1.2rem;
+        margin: 1.1rem 0 1.2rem;
     }
-    .stats-item {
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-        min-width: 0;
-    }
-    .stats-icon, .family-avatar {
-        width: 58px;
-        height: 58px;
+    .stats-item { display: flex; align-items: center; gap: 1rem; min-width: 0; }
+    .stats-icon, .family-avatar, .guest-avatar {
+        width: 56px;
+        height: 56px;
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
         background: var(--rose-light);
         color: var(--rose);
-        font-size: 1.45rem;
+        font-size: 1.35rem;
         flex: 0 0 auto;
     }
     .stats-number {
@@ -703,71 +637,96 @@ st.markdown(
         font-weight: 700;
         line-height: 1;
     }
-    .stats-label {
-        color: var(--muted);
-        font-size: 1rem;
-        margin-top: 0.35rem;
-    }
-    .stats-divider {
-        width: 1px;
-        align-self: stretch;
-        background: var(--line);
-    }
-    .family-row {
+    .stats-label { color: var(--muted); font-size: 1rem; margin-top: 0.35rem; }
+    .stats-divider { width: 1px; align-self: stretch; background: var(--line); }
+    .mobile-list-top {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        border: 1px solid var(--line);
-        background: var(--card);
-        border-radius: 18px;
-        padding: 1rem 1.15rem;
-        margin: 0.78rem 0;
-        box-shadow: 0 10px 25px rgba(72, 41, 35, 0.05);
+        color: var(--ink);
+        margin: 1.25rem 0 .65rem;
+        gap: 1rem;
     }
-    .family-left, .family-right {
+    .mobile-list-count {
+        display: inline-flex;
+        align-items: center;
+        gap: .55rem;
+        font-weight: 700;
+        color: var(--ink);
+        font-size: 1.08rem;
+    }
+    .mobile-list-count span:first-child { color: var(--rose); }
+    .mobile-order { color: var(--muted); font-weight: 500; }
+    .guest-card-link {
+        text-decoration: none !important;
+        color: inherit !important;
+        display: block;
+    }
+    .guest-card, .family-row {
         display: flex;
         align-items: center;
-        gap: 1rem;
-        min-width: 0;
+        border: 1px solid var(--line);
+        background: var(--card);
+        border-radius: 20px;
+        padding: 1rem 1.05rem;
+        margin: .72rem 0;
+        box-shadow: 0 10px 25px rgba(72, 41, 35, 0.05);
     }
-    .family-copy {
-        min-width: 0;
+    .guest-card:hover, .family-row:hover {
+        transform: translateY(-1px);
+        transition: transform .15s ease;
+        border-color: rgba(199, 125, 117, .35);
     }
-    .family-name {
+    .guest-copy, .family-copy { min-width: 0; flex: 1; }
+    .guest-name, .family-name {
         color: var(--ink);
         font-family: 'Playfair Display', Georgia, serif;
-        font-size: 1.35rem;
         font-weight: 700;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
     }
-    .family-sub {
+    .guest-name { font-size: 1.35rem; }
+    .family-name { font-size: 1.45rem; }
+    .guest-family, .family-sub {
         color: var(--muted);
-        margin-top: 0.2rem;
+        margin-top: .22rem;
+        font-size: 1rem;
     }
+    .guest-chevron, .chevron {
+        color: var(--muted);
+        font-size: 2rem;
+        line-height: 1;
+        padding-left: .75rem;
+    }
+    .guest-avatar { margin-right: 1rem; }
+    .family-left, .family-right { display: flex; align-items: center; gap: 1rem; min-width: 0; }
+    .family-left { flex: 1; }
+    .family-right { flex: 0 0 auto; }
     .pill {
         background: linear-gradient(135deg, #dca8a0, #c8746f);
         color: white;
         border-radius: 13px;
-        padding: 0.48rem 0.75rem;
+        padding: .48rem .75rem;
         font-weight: 700;
         min-width: 2.65rem;
         text-align: center;
         box-shadow: 0 8px 16px rgba(199, 125, 117, .22);
     }
-    .chevron {
-        color: var(--muted);
-        font-size: 2rem;
-        line-height: 1;
-    }
-    .bottom-nav {
-        display: none;
+    .mini-badge {
+        background: #fbecf5;
+        color: #9f5f87;
+        border: 1px solid #efd4e4;
+        border-radius: 999px;
+        padding: .28rem .55rem;
+        font-size: .78rem;
+        font-weight: 700;
+        margin-left: .7rem;
     }
     .section-kicker {
         color: var(--muted);
-        font-weight: 600;
-        margin: 0.35rem 0 0.8rem;
+        font-weight: 650;
+        margin: .35rem 0 .8rem;
     }
     .search-helper {
         display: flex;
@@ -780,140 +739,93 @@ st.markdown(
         color: var(--rose-dark);
         font-size: 1.25rem;
     }
-    .family-editor-title {
+    .editor-title {
         color: var(--ink);
         font-family: 'Playfair Display', Georgia, serif;
-        font-size: 1.65rem;
+        font-size: 1.72rem;
         font-weight: 700;
-        margin-bottom: 0.25rem;
+        margin-bottom: .25rem;
     }
-    .family-editor-sub {
+    .editor-sub {
         color: var(--muted);
-        font-size: 0.95rem;
-        margin-bottom: 0.9rem;
+        font-size: .96rem;
+        margin-bottom: 1rem;
     }
-    #mobile-bottom-nav-marker {
-        display: none;
+    .padrinhos-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+        margin: 1.3rem 0 1.2rem;
+        background: rgba(255,255,255,.7);
     }
+    .padrinhos-tab {
+        padding: .95rem 1rem;
+        text-align: center;
+        color: var(--muted);
+        font-weight: 650;
+    }
+    .padrinhos-tab.active {
+        color: white;
+        background: linear-gradient(135deg, #dca8a0, #c8746f);
+    }
+    .padrinhos-hero {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        background: linear-gradient(135deg, rgba(255,255,255,.95), rgba(248,238,238,.9));
+        border-radius: 20px;
+        padding: 1.4rem 1.25rem;
+        margin: 1rem 0 1.25rem;
+        box-shadow: var(--shadow);
+        display: flex;
+        align-items: center;
+        gap: 1.2rem;
+    }
+    .padrinhos-heart {
+        width: 76px;
+        height: 76px;
+        border-radius: 50%;
+        background: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--rose);
+        font-size: 2rem;
+        box-shadow: 0 10px 24px rgba(72, 41, 35, .08);
+    }
+    #mobile-bottom-nav-marker { display: none; }
 
     @media (max-width: 720px) {
         .block-container {
-            padding: 1.55rem 1.05rem 6.8rem;
+            padding: 1.65rem 1.05rem 7rem;
             max-width: 480px;
         }
-        section[data-testid="stSidebar"] {
-            display: none;
-        }
-        .app-header {
-            margin: 0.25rem 0 1.25rem;
-        }
-        .app-title {
-            font-size: 3.05rem;
-            line-height: 0.95;
-        }
-        .app-subtitle {
-            font-size: 1rem;
-            line-height: 1.35;
-            margin-top: 0.55rem;
-        }
-        .header-icon {
-            display: block;
-        }
-        .hero-card {
-            padding: 0.9rem;
-            margin-top: 1rem;
-            border-radius: 18px;
-        }
-        .soft-card, .stats-card {
-            border-radius: 20px;
-            padding: 1rem 1.15rem;
-            margin: 1.25rem 0 1rem;
-        }
-        .stats-card {
-            min-height: 104px;
-            justify-content: space-between;
-        }
-        .stats-item {
-            gap: 0.9rem;
-            flex: 1 1 0;
-        }
-        .stats-icon, .family-avatar {
-            width: 50px;
-            height: 50px;
-            font-size: 1.25rem;
-        }
-        .stats-number {
-            font-size: 2.05rem;
-        }
-        .stats-label {
-            font-size: .95rem;
-        }
-        .table-card {
-            border: 0;
-            background: transparent;
-            box-shadow: none;
-            padding: 0;
-        }
-        .table-header {
-            display: none;
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            background: rgba(255, 255, 255, 0.92);
-            border-radius: 18px;
-            margin: 0.72rem 0;
-            padding: 0.15rem;
-            box-shadow: 0 10px 24px rgba(72, 41, 35, 0.06);
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stHorizontalBlock"] {
-            align-items: center;
-            gap: 0.35rem;
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"] .stButton button {
-            min-height: 44px;
-            border-radius: 14px;
-        }
-        .muted-cell {
-            min-height: 28px;
-            padding-left: 0.35rem;
-            font-size: 0.9rem;
-        }
-        .status-ok,
-        .status-favorite,
-        .status-bride,
-        .status-groom {
-            min-height: 28px;
-            padding: 0 0.65rem;
-            font-size: 0.76rem;
-        }
-        .family-row {
-            border-radius: 18px;
-            padding: 1rem;
-            margin: 0.72rem 0;
-        }
-        .family-left {
-            gap: 0.95rem;
-            overflow: hidden;
-        }
-        .family-right {
-            gap: 0.75rem;
-            flex: 0 0 auto;
-        }
-        .family-name {
-            font-size: 1.25rem;
-        }
-        .family-sub {
-            font-size: 0.95rem;
-        }
-        .pill {
-            border-radius: 12px;
-            min-width: 2.45rem;
-            padding: 0.46rem 0.68rem;
-        }
-        .chevron {
-            font-size: 1.8rem;
-        }
-        /* Menu inferior mobile feito com botões Streamlit.
-           Assim a navegação troca a tela dentro do app e não abre outra aba/navegador. */
+        section[data-testid="stSidebar"] { display: none; }
+        .app-header { margin: .25rem 0 1.25rem; }
+        .app-title { font-size: 3.05rem; }
+        .app-subtitle { font-size: 1rem; line-height: 1.35; }
+        .header-icon { font-size: 1.45rem; }
+        .hero-card { padding: .95rem; margin-top: 1rem; }
+        .stats-card { min-height: 104px; justify-content: space-between; padding: 1rem; }
+        .stats-item { gap: .8rem; flex: 1 1 0; }
+        .stats-icon, .family-avatar, .guest-avatar { width: 50px; height: 50px; font-size: 1.18rem; }
+        .stats-number { font-size: 2.05rem; }
+        .stats-label { font-size: .94rem; }
+        .guest-card, .family-row { border-radius: 18px; padding: .92rem .88rem; margin: .65rem 0; }
+        .guest-avatar { margin-right: .9rem; }
+        .guest-name { font-size: 1.24rem; }
+        .family-name { font-size: 1.26rem; }
+        .guest-family, .family-sub { font-size: .95rem; }
+        .guest-chevron, .chevron { font-size: 1.8rem; padding-left: .45rem; }
+        .pill { min-width: 2.45rem; padding: .46rem .68rem; }
+        .mini-badge { display: none; }
+        .mobile-list-top { margin-top: 1.05rem; }
+        .padrinhos-hero { padding: 1.15rem 1rem; gap: 1rem; }
+        .padrinhos-heart { width: 62px; height: 62px; font-size: 1.7rem; }
+        .editor-title { font-size: 1.5rem; }
+
         div[data-testid="stElementContainer"]:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"],
         .element-container:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"] {
             position: fixed;
@@ -923,12 +835,12 @@ st.markdown(
             display: grid !important;
             grid-template-columns: repeat(3, 1fr);
             gap: 0;
-            background: rgba(255,255,255,0.92);
+            background: rgba(255,255,255,0.94);
             backdrop-filter: blur(18px);
             border-top: 1px solid var(--line);
-            padding: 0.45rem 0.65rem calc(0.55rem + env(safe-area-inset-bottom));
+            padding: .45rem .65rem calc(.55rem + env(safe-area-inset-bottom));
             z-index: 1000;
-            box-shadow: 0 -14px 32px rgba(72, 41, 35, 0.08);
+            box-shadow: 0 -14px 32px rgba(72, 41, 35, .08);
         }
         div[data-testid="stElementContainer"]:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"] .stButton button,
         .element-container:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"] .stButton button {
@@ -937,7 +849,7 @@ st.markdown(
             background: transparent;
             box-shadow: none;
             color: var(--muted);
-            font-weight: 600;
+            font-weight: 650;
             white-space: pre-line;
             line-height: 1.25;
             justify-content: center;
@@ -959,11 +871,8 @@ st.markdown(
             background: var(--rose);
         }
     }
+
     @media (min-width: 721px) {
-        .family-row-mobile:hover {
-            transform: translateY(-1px);
-            transition: transform .15s ease;
-        }
         div[data-testid="stElementContainer"]:has(#mobile-bottom-nav-marker),
         .element-container:has(#mobile-bottom-nav-marker),
         div[data-testid="stElementContainer"]:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"],
@@ -976,6 +885,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+# -----------------------------
+# Estado inicial
+# -----------------------------
 if "guests" not in st.session_state:
     st.session_state.guests = load_data()["guests"]
 if "page" not in st.session_state:
@@ -984,13 +897,28 @@ if "side_filter" not in st.session_state:
     st.session_state.side_filter = "Todos"
 if "selected_family" not in st.session_state:
     st.session_state.selected_family = None
+if "selected_guest_id" not in st.session_state:
+    st.session_state.selected_guest_id = None
+if "editing_guest_id" not in st.session_state:
+    st.session_state.editing_guest_id = None
 
-query_page = st.query_params.get("page")
-if isinstance(query_page, list):
-    query_page = query_page[0] if query_page else None
+query_page = qp_value("page")
 if query_page in ["Convidados", "Famílias", "Padrinhos"]:
     st.session_state.page = query_page
 
+query_edit = qp_value("edit")
+if query_edit and find_guest(query_edit):
+    st.session_state.editing_guest_id = query_edit
+    st.session_state.selected_guest_id = query_edit
+
+query_family = qp_value("family")
+if query_family and st.session_state.page == "Famílias":
+    st.session_state.selected_family = display_family_name(query_family)
+
+
+# -----------------------------
+# Sidebar desktop
+# -----------------------------
 with st.sidebar:
     st.markdown(
         """
@@ -1001,61 +929,46 @@ with st.sidebar:
         """,
         unsafe_allow_html=True,
     )
-    st.button(
-        "Convidados",
-        use_container_width=True,
-        type="primary" if st.session_state.page == "Convidados" else "secondary",
-        on_click=set_page,
-        args=("Convidados",),
-    )
-    st.button(
-        "Famílias",
-        use_container_width=True,
-        type="primary" if st.session_state.page == "Famílias" else "secondary",
-        on_click=set_page,
-        args=("Famílias",),
-    )
-    st.button(
-        "Padrinhos",
-        use_container_width=True,
-        type="primary" if st.session_state.page == "Padrinhos" else "secondary",
-        on_click=set_page,
-        args=("Padrinhos",),
-    )
-    st.markdown("<div style='height:38vh'></div>", unsafe_allow_html=True)
+    for label in ["Convidados", "Famílias", "Padrinhos"]:
+        st.button(
+            label,
+            use_container_width=True,
+            type="primary" if st.session_state.page == label else "secondary",
+            on_click=set_page,
+            args=(label,),
+        )
+    st.markdown("<div style='height:36vh'></div>", unsafe_allow_html=True)
     st.caption("Tudo salvo automaticamente.")
 
+
 total_guests = len([g for g in st.session_state.guests if g["name"].strip()])
-favorite_count = len(
-    [g for g in st.session_state.guests if g["name"].strip() and g["favorite"]]
-)
+favorite_count = len([g for g in st.session_state.guests if g["name"].strip() and g["favorite"]])
 families = family_summary()
 family_count = len(families)
 
-page_title = {
-    "Convidados": "Convidados",
-    "Famílias": "Famílias",
-    "Padrinhos": "Padrinhos",
-}[st.session_state.page]
 page_subtitle = {
     "Convidados": "Organize sua lista do casamento",
     "Famílias": "Organize os convidados por núcleo familiar",
     "Padrinhos": "Lista especial do casamento",
 }[st.session_state.page]
 
-render_header(page_title, page_subtitle, {"Convidados": "♡", "Famílias": "👥", "Padrinhos": "♡"}[st.session_state.page])
+render_header(st.session_state.page, page_subtitle, {"Convidados": "👥", "Famílias": "👥", "Padrinhos": "♡"}[st.session_state.page])
 
+
+# -----------------------------
+# Página Convidados
+# -----------------------------
 if st.session_state.page == "Convidados":
     st.markdown('<div class="hero-card">', unsafe_allow_html=True)
-    add_cols = st.columns([2.2, 1.35, 1, 1])
-    new_name = add_cols[0].text_input(
+    add_cols = st.columns([2.5, 1.4, 1, 1.1], vertical_alignment="bottom")
+    add_cols[0].text_input(
         "Novo convidado",
         key="new_guest_name",
         placeholder="Digite o nome do convidado",
         label_visibility="collapsed",
     )
     family_options = ["Sem família"] + sorted(families.keys())
-    new_family = add_cols[1].selectbox(
+    add_cols[1].selectbox(
         "Família",
         family_options,
         key="new_guest_family",
@@ -1075,24 +988,18 @@ if st.session_state.page == "Convidados":
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    count_cols = st.columns([1, 1, 1])
-    count_cols[0].metric("Convidados", total_guests)
-    count_cols[1].metric("Favoritos", favorite_count)
-    count_cols[2].metric("Famílias", family_count)
+    editing_guest = find_guest(st.session_state.get("editing_guest_id"))
+    if editing_guest:
+        render_guest_editor_panel(editing_guest)
 
-    tool_cols = st.columns([1, 1])
-    if tool_cols[0].button("Importar Pasta1.xlsx", use_container_width=True):
-        if DEFAULT_XLSX.exists():
-            import_xlsx(DEFAULT_XLSX)
-            st.rerun()
-        else:
-            st.error("Nao encontrei a planilha.")
-    tool_cols[1].download_button(
-        "Baixar CSV",
-        data=csv_bytes(),
-        file_name="lista_casamento.csv",
-        mime="text/csv",
-        use_container_width=True,
+    st.markdown(
+        f"""
+        <div class="mobile-list-top">
+            <div class="mobile-list-count"><span>👥</span> {total_guests} convidados</div>
+            <div class="mobile-order">Ordenar⌄</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     filter_cols = st.columns([1, 1, 1, 2])
@@ -1105,37 +1012,48 @@ if st.session_state.page == "Convidados":
             st.session_state.side_filter = label
             st.rerun()
 
+    with st.expander("Importar / baixar lista", expanded=False):
+        tool_cols = st.columns([1, 1])
+        if tool_cols[0].button("Importar Pasta1.xlsx", use_container_width=True):
+            if DEFAULT_XLSX.exists():
+                import_xlsx(DEFAULT_XLSX)
+                st.rerun()
+            else:
+                st.error("Não encontrei a planilha no caminho configurado.")
+        tool_cols[1].download_button(
+            "Baixar CSV",
+            data=csv_bytes(),
+            file_name="lista_casamento.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
     shown_guests = [
         guest
         for guest in st.session_state.guests
-        if st.session_state.side_filter == "Todos"
-        or guest.get("side", "Noiva") == st.session_state.side_filter
+        if guest["name"].strip()
+        and (st.session_state.side_filter == "Todos" or guest.get("side", "Noiva") == st.session_state.side_filter)
     ]
-
-    st.markdown('<div class="table-card">', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="section-kicker">{len([g for g in shown_guests if g["name"].strip()])} convidados em {st.session_state.side_filter.lower()}</div>',
-        unsafe_allow_html=True,
-    )
-    header = st.columns([2.5, 2, 1.15, 1, 0.45])
-    header[0].markdown('<div class="table-header">Nome do convidado</div>', unsafe_allow_html=True)
-    header[1].markdown('<div class="table-header">Família</div>', unsafe_allow_html=True)
-    header[2].markdown('<div class="table-header">Status</div>', unsafe_allow_html=True)
-    header[3].markdown('<div class="table-header">Lado</div>', unsafe_allow_html=True)
-    header[4].markdown('<div class="table-header"></div>', unsafe_allow_html=True)
     for guest in shown_guests:
-        guest_row(guest)
-    st.markdown("</div>", unsafe_allow_html=True)
+        render_guest_card(guest, page="Convidados")
 
+
+# -----------------------------
+# Página Famílias
+# -----------------------------
 elif st.session_state.page == "Famílias":
     render_family_stats(family_count, total_guests)
-    search_cols = st.columns([5, 0.7], vertical_alignment="center")
+    search_cols = st.columns([5, .7], vertical_alignment="center")
     search = search_cols[0].text_input(
         "Buscar família",
         placeholder="Buscar família",
         label_visibility="collapsed",
     ).strip().lower()
     search_cols[1].markdown('<div class="search-helper">☰</div>', unsafe_allow_html=True)
+
+    if st.session_state.selected_family:
+        render_family_editor(st.session_state.selected_family)
+
     if not families:
         st.info("Nenhum convidado cadastrado.")
     else:
@@ -1146,46 +1064,56 @@ elif st.session_state.page == "Famílias":
             visible_families.append((family, values))
 
         for family, values in visible_families:
-            family_key = stable_key(family)
             render_family_row(family, values)
-            action_cols = st.columns([1, 1], vertical_alignment="center")
-            if action_cols[0].button("Editar família", key=f"edit_family_{family_key}", use_container_width=True):
-                st.session_state.selected_family = None if st.session_state.selected_family == family else family
-                st.session_state.selected_guest_id = None
-                st.session_state.editing_guest_id = None
-                st.rerun()
-            if action_cols[1].button("Adicionar pessoa", key=f"quick_add_family_{family_key}", use_container_width=True):
-                st.session_state.selected_family = family
-                st.session_state.selected_guest_id = None
-                st.session_state.editing_guest_id = None
-                st.rerun()
-
-            if st.session_state.selected_family == family:
-                render_family_editor(family)
 
         if not visible_families:
             st.info("Nenhuma família encontrada com esse filtro.")
 
+
+# -----------------------------
+# Página Padrinhos
+# -----------------------------
 else:
-    favorites = [
-        guest for guest in st.session_state.guests if guest["name"].strip() and guest["favorite"]
-    ]
+    st.markdown(
+        """
+        <div class="padrinhos-tabs">
+            <div class="padrinhos-tab">Noivos</div>
+            <div class="padrinhos-tab active">Madrinhas & Padrinhos</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.markdown(
         f"""
-        <div class="soft-card">
-            <div class="family-name">{favorite_count} padrinhos</div>
-            <div class="family-sub">Pessoas especiais marcadas com estrela.</div>
+        <div class="padrinhos-hero">
+            <div class="padrinhos-heart">♡</div>
+            <div>
+                <div class="family-name">{favorite_count} padrinhos</div>
+                <div class="family-sub">Pessoas especiais que caminham com vocês nesse dia inesquecível.</div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
     if st.button("+ Adicionar padrinho", type="primary", use_container_width=True):
-        st.session_state.guests.insert(0, new_guest("", "Padrinhos", True))
+        guest = new_guest("", "Padrinhos", True)
+        st.session_state.guests.insert(0, guest)
         save_data()
+        st.query_params.clear()
+        st.query_params["page"] = "Padrinhos"
+        st.query_params["edit"] = guest["id"]
+        st.session_state.editing_guest_id = guest["id"]
         st.rerun()
+
+    editing_guest = find_guest(st.session_state.get("editing_guest_id"))
+    if editing_guest and editing_guest.get("favorite"):
+        render_guest_editor_panel(editing_guest, "Editar padrinho/madrinha")
+
+    favorites = [guest for guest in st.session_state.guests if guest["name"].strip() and guest["favorite"]]
     if not favorites:
-        st.info("Nenhum favorito marcado ainda.")
+        st.info("Nenhum padrinho ou madrinha marcado ainda.")
     for guest in favorites:
-        guest_row(guest, compact=True)
+        render_guest_card(guest, page="Padrinhos")
+
 
 render_bottom_nav(st.session_state.page)
