@@ -143,6 +143,8 @@ def add_guest_from_inputs():
     guest = new_guest(name, family)
     guest["side"] = side
     st.session_state.guests.insert(0, guest)
+    st.session_state.editing_guest_id = guest["id"]
+    st.session_state.selected_guest_id = guest["id"]
     st.session_state.new_guest_name = ""
     save_data()
 
@@ -151,7 +153,10 @@ def add_guest_to_family(family, input_key):
     name = st.session_state.get(input_key, "").strip()
     if not name:
         return
-    st.session_state.guests.insert(0, new_guest(name, display_family_name(family)))
+    guest = new_guest(name, display_family_name(family))
+    st.session_state.guests.insert(0, guest)
+    st.session_state.editing_guest_id = guest["id"]
+    st.session_state.selected_guest_id = guest["id"]
     st.session_state[input_key] = ""
     save_data()
 
@@ -319,56 +324,74 @@ def render_family_stats(family_count, total_guests):
     )
 
 
-def render_guest_card(guest, page="Convidados"):
-    name = html.escape(guest["name"].strip() or "Sem nome")
+def render_guest_card(guest, page="Convidados", family_locked=False):
+    """Renderiza o convidado como card clicável e expande a edição no próprio card.
+
+    Não usa link, query string ou nova tela. O clique apenas altera o estado da sessão
+    e abre o formulário logo abaixo do card selecionado.
+    """
+    name_raw = guest.get("name", "").strip() or "Sem nome"
+    name = html.escape(name_raw)
     family = html.escape(display_family_name(guest.get("family", "Sem família")))
-    href = html.escape(build_url(page, edit=guest["id"]))
+    is_open = st.session_state.get("editing_guest_id") == guest["id"]
     favorite_badge = '<span class="mini-badge">Padrinho</span>' if guest.get("favorite") else ""
-    st.markdown(
-        f"""
-        <a class="guest-card-link" target="_self" href="{href}">
-            <div class="guest-card">
-                <div class="guest-avatar">♡</div>
-                <div class="guest-copy">
-                    <div class="guest-name">{name}</div>
-                    <div class="guest-family">{family}</div>
-                </div>
-                {favorite_badge}
-                <div class="guest-chevron">›</div>
-            </div>
-        </a>
-        """,
-        unsafe_allow_html=True,
+    open_class = " guest-card-open" if is_open else ""
+    chevron = "⌄" if is_open else "›"
+
+    card_html = (
+        f'<div class="guest-card{open_class}">'
+        '<div class="guest-avatar">♡</div>'
+        '<div class="guest-copy">'
+        f'<div class="guest-name">{name}</div>'
+        f'<div class="guest-family">{family}</div>'
+        '</div>'
+        f'{favorite_badge}'
+        f'<div class="guest-chevron">{chevron}</div>'
+        '</div>'
+        '<span class="guest-card-click-marker"></span>'
     )
+    st.markdown(card_html, unsafe_allow_html=True)
+
+    button_label = "Fechar edição" if is_open else f"Editar {name_raw}"
+    if st.button(button_label, key=f"open_guest_{page}_{guest['id']}", use_container_width=True):
+        st.session_state.editing_guest_id = None if is_open else guest["id"]
+        st.session_state.selected_guest_id = None if is_open else guest["id"]
+        st.rerun()
+
+    if is_open:
+        render_guest_editor_panel(guest, "Editar convidado", family_locked=family_locked)
 
 
 def render_family_row(family, values):
-    safe_family = html.escape(display_family_name(family))
+    """Card de família clicável sem link/aba nova."""
+    family_display = display_family_name(family)
+    safe_family = html.escape(family_display)
     total = int(values.get("total", 0))
     favoritos = int(values.get("favorites", 0))
     plural = "convidado" if total == 1 else "convidados"
     fav_text = f" · {favoritos} favorito" if favoritos == 1 else (f" · {favoritos} favoritos" if favoritos else "")
-    href = html.escape(build_url("Famílias", family=display_family_name(family)))
-    st.markdown(
-        f"""
-        <a class="guest-card-link" target="_self" href="{href}">
-            <div class="family-row family-row-mobile">
-                <div class="family-left">
-                    <div class="family-avatar">👥</div>
-                    <div class="family-copy">
-                        <div class="family-name">{safe_family}</div>
-                        <div class="family-sub">{total} {plural}{fav_text}</div>
-                    </div>
-                </div>
-                <div class="family-right">
-                    <div class="pill">{total}</div>
-                    <div class="chevron">›</div>
-                </div>
-            </div>
-        </a>
-        """,
-        unsafe_allow_html=True,
+    row_html = (
+        '<div class="family-row family-row-mobile">'
+        '<div class="family-left">'
+        '<div class="family-avatar">👥</div>'
+        '<div class="family-copy">'
+        f'<div class="family-name">{safe_family}</div>'
+        f'<div class="family-sub">{total} {plural}{fav_text}</div>'
+        '</div>'
+        '</div>'
+        '<div class="family-right">'
+        f'<div class="pill">{total}</div>'
+        '<div class="chevron">›</div>'
+        '</div>'
+        '</div>'
+        '<span class="family-card-click-marker"></span>'
     )
+    st.markdown(row_html, unsafe_allow_html=True)
+    if st.button(f"Abrir {family_display}", key=f"open_family_{stable_key(family_display)}", use_container_width=True):
+        st.session_state.selected_family = family_display
+        st.session_state.editing_guest_id = None
+        st.session_state.selected_guest_id = None
+        st.rerun()
 
 
 def render_guest_editor_panel(guest, title="Editar convidado", family_locked=False):
@@ -436,8 +459,6 @@ def render_family_editor(family):
     family = display_family_name(family)
     key = stable_key(family)
     members = [guest for guest in st.session_state.guests if family_matches(guest, family)]
-    editing_guest = find_guest(st.session_state.get("editing_guest_id"))
-
     with st.container(border=True):
         st.markdown(
             f"""
@@ -476,11 +497,8 @@ def render_family_editor(family):
             st.rerun()
 
         st.markdown(f"<div class='section-kicker'>{len(members)} convidados nesta família</div>", unsafe_allow_html=True)
-        if editing_guest and family_matches(editing_guest, family):
-            render_guest_editor_panel(editing_guest, "Editar convidado da família", family_locked=True)
-
         for guest in members:
-            render_guest_card(guest, page="Famílias")
+            render_guest_card(guest, page="Famílias", family_locked=True)
 
 
 def render_bottom_nav(active_page):
@@ -512,6 +530,12 @@ st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Inter:wght@400;500;600;700&display=swap');
+
+    #MainMenu, footer, header[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"] {
+        display: none !important;
+        visibility: hidden !important;
+        height: 0 !important;
+    }
     :root {
         --rose: #c77d75;
         --rose-dark: #b86d66;
@@ -676,6 +700,30 @@ st.markdown(
         transform: translateY(-1px);
         transition: transform .15s ease;
         border-color: rgba(199, 125, 117, .35);
+    }
+    .guest-card-open {
+        border-color: rgba(199, 125, 117, .55);
+        background: linear-gradient(135deg, rgba(255,255,255,.96), rgba(253,243,241,.96));
+        box-shadow: 0 12px 28px rgba(199, 125, 117, .10);
+    }
+
+    /* Botão invisível sobre o card: mantém o visual HTML e deixa o card clicável pelo Streamlit. */
+    div[data-testid="stElementContainer"]:has(.guest-card-click-marker) + div[data-testid="stElementContainer"],
+    div[data-testid="stElementContainer"]:has(.family-card-click-marker) + div[data-testid="stElementContainer"] {
+        margin-top: -92px !important;
+        height: 92px !important;
+        position: relative !important;
+        z-index: 20 !important;
+        opacity: 0 !important;
+    }
+    div[data-testid="stElementContainer"]:has(.guest-card-click-marker) + div[data-testid="stElementContainer"] .stButton,
+    div[data-testid="stElementContainer"]:has(.family-card-click-marker) + div[data-testid="stElementContainer"] .stButton,
+    div[data-testid="stElementContainer"]:has(.guest-card-click-marker) + div[data-testid="stElementContainer"] .stButton button,
+    div[data-testid="stElementContainer"]:has(.family-card-click-marker) + div[data-testid="stElementContainer"] .stButton button {
+        width: 100% !important;
+        height: 92px !important;
+        min-height: 92px !important;
+        cursor: pointer !important;
     }
     .guest-copy, .family-copy { min-width: 0; flex: 1; }
     .guest-name, .family-name {
@@ -988,10 +1036,6 @@ if st.session_state.page == "Convidados":
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    editing_guest = find_guest(st.session_state.get("editing_guest_id"))
-    if editing_guest:
-        render_guest_editor_panel(editing_guest)
-
     st.markdown(
         f"""
         <div class="mobile-list-top">
@@ -1096,18 +1140,12 @@ else:
         unsafe_allow_html=True,
     )
     if st.button("+ Adicionar padrinho", type="primary", use_container_width=True):
-        guest = new_guest("", "Padrinhos", True)
+        guest = new_guest("Novo padrinho", "Padrinhos", True)
         st.session_state.guests.insert(0, guest)
         save_data()
-        st.query_params.clear()
-        st.query_params["page"] = "Padrinhos"
-        st.query_params["edit"] = guest["id"]
         st.session_state.editing_guest_id = guest["id"]
+        st.session_state.selected_guest_id = guest["id"]
         st.rerun()
-
-    editing_guest = find_guest(st.session_state.get("editing_guest_id"))
-    if editing_guest and editing_guest.get("favorite"):
-        render_guest_editor_panel(editing_guest, "Editar padrinho/madrinha")
 
     favorites = [guest for guest in st.session_state.guests if guest["name"].strip() and guest["favorite"]]
     if not favorites:
