@@ -1,6 +1,8 @@
 import csv
 import io
 import json
+import html
+import urllib.parse
 import uuid
 from pathlib import Path
 
@@ -41,8 +43,17 @@ INITIAL_FAMILIES = [
 
 
 def family_label(index, names):
-    first_name = names[0] if names else f"Familia {index}"
-    return f"Familia {first_name}"
+    first_name = names[0] if names else f"Família {index}"
+    return f"Família {first_name}"
+
+
+def display_family_name(family):
+    family = (family or "Sem família").strip()
+    if family.startswith("Familia "):
+        return "Família " + family[len("Familia "):]
+    if family == "Sem familia":
+        return "Sem família"
+    return family
 
 
 def new_guest(name="", family="", favorite=False):
@@ -73,7 +84,7 @@ def normalize_guest(item):
     return {
         "id": item.get("id", str(uuid.uuid4())),
         "name": item.get("name", ""),
-        "family": item.get("family", "Sem familia"),
+        "family": item.get("family", "Sem família"),
         "favorite": favorite,
         "status": item.get("status", "Pendente"),
         "side": item.get("side", "Noiva"),
@@ -153,7 +164,7 @@ def remove_guest(guest_id):
 
 
 def add_guest():
-    st.session_state.guests.insert(0, new_guest("", "Sem familia"))
+    st.session_state.guests.insert(0, new_guest("", "Sem família"))
     save_data()
 
 
@@ -184,7 +195,7 @@ def family_summary():
     for guest in st.session_state.guests:
         if not guest["name"].strip():
             continue
-        family = guest["family"].strip() or "Sem familia"
+        family = display_family_name(guest["family"].strip() or "Sem família")
         families.setdefault(family, {"total": 0, "favorites": 0})
         families[family]["total"] += 1
         families[family]["favorites"] += int(guest["favorite"])
@@ -194,7 +205,7 @@ def family_summary():
 def guest_row(guest, compact=False):
     selected = st.session_state.get("selected_guest_id") == guest["id"]
     editing = st.session_state.get("editing_guest_id") == guest["id"]
-    family_name = guest["family"].strip() or "Sem familia"
+    family_name = display_family_name(guest["family"].strip() or "Sem família")
 
     with st.container(border=True):
         if editing:
@@ -218,10 +229,10 @@ def guest_row(guest, compact=False):
                 label_visibility="collapsed",
             )
             family = cols[2].text_input(
-                "Familia",
-                value=guest["family"],
+                "Família",
+                value=display_family_name(guest["family"]),
                 key=f"family_{guest['id']}",
-                placeholder="Familia",
+                placeholder="Família",
                 label_visibility="collapsed",
             )
             status = cols[3].selectbox(
@@ -289,8 +300,97 @@ def guest_row(guest, compact=False):
                     st.rerun()
 
 
+
+def render_header(title, subtitle, icon):
+    st.markdown(
+        f"""
+        <div class="app-header">
+            <div>
+                <h1 class="app-title">{html.escape(title)}</h1>
+                <div class="app-subtitle">{html.escape(subtitle)}</div>
+            </div>
+            <div class="header-icon">{icon}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_family_stats(family_count, total_guests):
+    st.markdown(
+        f"""
+        <div class="stats-card">
+            <div class="stats-item">
+                <div class="stats-icon">👥</div>
+                <div>
+                    <div class="stats-number">{family_count}</div>
+                    <div class="stats-label">famílias</div>
+                </div>
+            </div>
+            <div class="stats-divider"></div>
+            <div class="stats-item">
+                <div class="stats-icon">♡</div>
+                <div>
+                    <div class="stats-number">{total_guests}</div>
+                    <div class="stats-label">convidados</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_family_row(family, values):
+    safe_family = html.escape(display_family_name(family))
+    total = int(values.get("total", 0))
+    favoritos = int(values.get("favorites", 0))
+    plural = "convidado" if total == 1 else "convidados"
+    fav_text = f" · {favoritos} favorito" if favoritos == 1 else (f" · {favoritos} favoritos" if favoritos else "")
+    st.markdown(
+        f"""
+        <div class="family-row family-row-mobile">
+            <div class="family-left">
+                <div class="family-avatar">👥</div>
+                <div class="family-copy">
+                    <div class="family-name">{safe_family}</div>
+                    <div class="family-sub">{total} {plural}{fav_text}</div>
+                </div>
+            </div>
+            <div class="family-right">
+                <div class="pill">{total}</div>
+                <div class="chevron">›</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def nav_href(page):
+    return "?" + urllib.parse.urlencode({"page": page})
+
+
+def render_bottom_nav(active_page):
+    nav_items = [
+        ("Convidados", "👥"),
+        ("Famílias", "⌂"),
+        ("Padrinhos", "♡"),
+    ]
+    links = []
+    for label, icon in nav_items:
+        active = " active" if label == active_page else ""
+        links.append(
+            f'<a class="bottom-nav-item{active}" href="{nav_href(label)}">'
+            f'<span class="bottom-nav-icon">{icon}</span>'
+            f'<span class="bottom-nav-text">{label}</span>'
+            f'</a>'
+        )
+    st.markdown(f'<nav class="bottom-nav">{"".join(links)}</nav>', unsafe_allow_html=True)
+
 def set_page(page):
     st.session_state.page = page
+    st.query_params["page"] = page
 
 
 st.set_page_config(page_title="Lista do casamento", layout="wide")
@@ -302,15 +402,18 @@ st.markdown(
     :root {
         --rose: #c77d75;
         --rose-dark: #b86d66;
+        --rose-light: #f7ece9;
         --ink: #171827;
         --muted: #858891;
         --line: #eadfda;
-        --card: rgba(255, 255, 255, 0.88);
+        --card: rgba(255, 255, 255, 0.90);
         --wash: #fbf6f2;
+        --shadow: 0 18px 46px rgba(72, 41, 35, 0.08);
     }
     html, body, [data-testid="stAppViewContainer"] {
         background:
-            radial-gradient(circle at 18% 4%, rgba(199, 125, 117, 0.11), transparent 30%),
+            radial-gradient(circle at 16% 5%, rgba(199, 125, 117, 0.12), transparent 32%),
+            radial-gradient(circle at 95% 0%, rgba(199, 125, 117, 0.08), transparent 28%),
             linear-gradient(180deg, #fffbf8 0%, #f9f4ef 100%);
     }
     .block-container {
@@ -326,26 +429,43 @@ st.markdown(
     section[data-testid="stSidebar"] .block-container {
         padding: 2.1rem 1.1rem;
     }
-    h1 {
+    h1, .app-title {
         color: var(--rose);
         font-family: 'Playfair Display', Georgia, serif;
         font-size: clamp(2.45rem, 7vw, 4.35rem);
         line-height: 0.95;
         letter-spacing: 0;
-        margin-bottom: 0.15rem;
+        margin: 0;
     }
-    h2, h3, p, label, div, span, input, button {
+    h2, h3, p, label, div, span, input, button, a {
         font-family: 'Inter', system-ui, sans-serif;
     }
+    .app-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1.05rem;
+    }
+    .app-subtitle,
     [data-testid="stCaptionContainer"] {
         color: var(--muted);
         font-size: 1.02rem;
+        margin-top: 0.55rem;
+    }
+    .header-icon {
+        display: none;
+        color: var(--rose);
+        font-size: 1.55rem;
+        line-height: 1;
+        padding-top: 0.4rem;
+        opacity: 0.95;
     }
     div[data-testid="stMetric"] {
         background: var(--card);
         border: 1px solid var(--line);
-        border-radius: 8px;
-        box-shadow: 0 18px 40px rgba(72, 41, 35, 0.08);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
         padding: 14px 16px;
     }
     div[data-testid="stMetricValue"] {
@@ -354,12 +474,12 @@ st.markdown(
     }
     div[data-testid="stVerticalBlockBorderWrapper"] {
         border-color: var(--line);
-        border-radius: 8px;
+        border-radius: 16px;
         background: var(--card);
         box-shadow: 0 10px 25px rgba(72, 41, 35, 0.06);
     }
     .stButton button {
-        border-radius: 6px;
+        border-radius: 12px;
         min-height: 42px;
         border-color: var(--line);
         color: var(--rose-dark);
@@ -411,7 +531,7 @@ st.markdown(
         justify-content: center;
         min-height: 30px;
         padding: 0 0.8rem;
-        border-radius: 8px;
+        border-radius: 10px;
         font-weight: 600;
         font-size: 0.86rem;
     }
@@ -437,9 +557,9 @@ st.markdown(
     }
     .table-card {
         border: 1px solid var(--line);
-        border-radius: 8px;
+        border-radius: 18px;
         background: rgba(255, 255, 255, 0.78);
-        box-shadow: 0 18px 46px rgba(72, 41, 35, 0.08);
+        box-shadow: var(--shadow);
         padding: 0.9rem;
         margin-top: 1rem;
     }
@@ -454,23 +574,65 @@ st.markdown(
         margin-bottom: 0.55rem;
     }
     input {
-        border-radius: 8px !important;
+        border-radius: 14px !important;
     }
     .hero-card {
         border: 1px solid var(--line);
         background: var(--card);
-        border-radius: 8px;
+        border-radius: 18px;
         padding: 1rem;
-        box-shadow: 0 18px 46px rgba(72, 41, 35, 0.08);
+        box-shadow: var(--shadow);
         margin: 1.15rem 0 1.05rem;
     }
-    .soft-card {
+    .soft-card, .stats-card {
         border: 1px solid var(--line);
-        background: linear-gradient(135deg, rgba(255,255,255,0.92), rgba(251,238,234,0.9));
-        border-radius: 8px;
+        background: var(--card);
+        border-radius: 18px;
         padding: 1.1rem 1.2rem;
-        box-shadow: 0 18px 46px rgba(72, 41, 35, 0.08);
-        margin: 1rem 0;
+        box-shadow: var(--shadow);
+        margin: 1.1rem 0 1.2rem;
+    }
+    .stats-card {
+        display: flex;
+        align-items: center;
+        justify-content: space-around;
+        gap: 1rem;
+        min-height: 112px;
+    }
+    .stats-item {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        min-width: 0;
+    }
+    .stats-icon, .family-avatar {
+        width: 58px;
+        height: 58px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--rose-light);
+        color: var(--rose);
+        font-size: 1.45rem;
+        flex: 0 0 auto;
+    }
+    .stats-number {
+        color: var(--ink);
+        font-family: 'Playfair Display', Georgia, serif;
+        font-size: 2.25rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .stats-label {
+        color: var(--muted);
+        font-size: 1rem;
+        margin-top: 0.35rem;
+    }
+    .stats-divider {
+        width: 1px;
+        align-self: stretch;
+        background: var(--line);
     }
     .family-row {
         display: flex;
@@ -478,16 +640,28 @@ st.markdown(
         justify-content: space-between;
         border: 1px solid var(--line);
         background: var(--card);
-        border-radius: 8px;
-        padding: 1rem;
-        margin: 0.7rem 0;
+        border-radius: 18px;
+        padding: 1rem 1.15rem;
+        margin: 0.78rem 0;
         box-shadow: 0 10px 25px rgba(72, 41, 35, 0.05);
+    }
+    .family-left, .family-right {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        min-width: 0;
+    }
+    .family-copy {
+        min-width: 0;
     }
     .family-name {
         color: var(--ink);
         font-family: 'Playfair Display', Georgia, serif;
         font-size: 1.35rem;
         font-weight: 700;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
     .family-sub {
         color: var(--muted);
@@ -496,47 +670,89 @@ st.markdown(
     .pill {
         background: linear-gradient(135deg, #dca8a0, #c8746f);
         color: white;
-        border-radius: 8px;
-        padding: 0.45rem 0.75rem;
+        border-radius: 13px;
+        padding: 0.48rem 0.75rem;
         font-weight: 700;
-        min-width: 2.5rem;
+        min-width: 2.65rem;
         text-align: center;
+        box-shadow: 0 8px 16px rgba(199, 125, 117, .22);
+    }
+    .chevron {
+        color: var(--muted);
+        font-size: 2rem;
+        line-height: 1;
     }
     .bottom-nav {
-        position: fixed;
-        left: 50%;
-        bottom: 0;
-        transform: translateX(-50%);
-        width: min(760px, 100vw);
-        background: rgba(255,255,255,0.92);
-        backdrop-filter: blur(18px);
-        border-top: 1px solid var(--line);
-        padding: 0.55rem 0.85rem 0.75rem;
-        z-index: 99;
-        box-shadow: 0 -14px 32px rgba(72, 41, 35, 0.08);
-    }
-    .bottom-nav-label {
-        text-align: center;
-        color: var(--muted);
-        font-size: 0.86rem;
-        margin-top: -0.35rem;
+        display: none;
     }
     .section-kicker {
         color: var(--muted);
         font-weight: 600;
         margin: 0.35rem 0 0.8rem;
     }
+    .search-helper {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 44px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.72);
+        color: var(--rose-dark);
+        font-size: 1.25rem;
+    }
+
     @media (max-width: 720px) {
         .block-container {
-            padding: 1.4rem 0.9rem 5.8rem;
-            max-width: 760px;
+            padding: 1.55rem 1.05rem 6.8rem;
+            max-width: 480px;
         }
         section[data-testid="stSidebar"] {
             display: none;
         }
+        .app-header {
+            margin: 0.25rem 0 1.25rem;
+        }
+        .app-title {
+            font-size: 3.05rem;
+            line-height: 0.95;
+        }
+        .app-subtitle {
+            font-size: 1rem;
+            line-height: 1.35;
+            margin-top: 0.55rem;
+        }
+        .header-icon {
+            display: block;
+        }
         .hero-card {
-            padding: 0.85rem;
+            padding: 0.9rem;
             margin-top: 1rem;
+            border-radius: 18px;
+        }
+        .soft-card, .stats-card {
+            border-radius: 20px;
+            padding: 1rem 1.15rem;
+            margin: 1.25rem 0 1rem;
+        }
+        .stats-card {
+            min-height: 104px;
+            justify-content: space-between;
+        }
+        .stats-item {
+            gap: 0.9rem;
+            flex: 1 1 0;
+        }
+        .stats-icon, .family-avatar {
+            width: 50px;
+            height: 50px;
+            font-size: 1.25rem;
+        }
+        .stats-number {
+            font-size: 2.05rem;
+        }
+        .stats-label {
+            font-size: .95rem;
         }
         .table-card {
             border: 0;
@@ -548,10 +764,11 @@ st.markdown(
             display: none;
         }
         div[data-testid="stVerticalBlockBorderWrapper"] {
-            background: rgba(255, 255, 255, 0.9);
-            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.92);
+            border-radius: 18px;
             margin: 0.72rem 0;
             padding: 0.15rem;
+            box-shadow: 0 10px 24px rgba(72, 41, 35, 0.06);
         }
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stHorizontalBlock"] {
             align-items: center;
@@ -559,7 +776,7 @@ st.markdown(
         }
         div[data-testid="stVerticalBlockBorderWrapper"] .stButton button {
             min-height: 44px;
-            border-radius: 8px;
+            border-radius: 14px;
         }
         .muted-cell {
             min-height: 28px;
@@ -572,16 +789,87 @@ st.markdown(
         .status-groom {
             min-height: 28px;
             padding: 0 0.65rem;
-            font-size: 0.78rem;
+            font-size: 0.76rem;
         }
         .family-row {
-            padding: 0.85rem;
-            margin: 0.65rem 0;
+            border-radius: 18px;
+            padding: 1rem;
+            margin: 0.72rem 0;
+        }
+        .family-left {
+            gap: 0.95rem;
+            overflow: hidden;
+        }
+        .family-right {
+            gap: 0.75rem;
+            flex: 0 0 auto;
+        }
+        .family-name {
+            font-size: 1.25rem;
+        }
+        .family-sub {
+            font-size: 0.95rem;
+        }
+        .pill {
+            border-radius: 12px;
+            min-width: 2.45rem;
+            padding: 0.46rem 0.68rem;
+        }
+        .chevron {
+            font-size: 1.8rem;
+        }
+        .bottom-nav {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0;
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(18px);
+            border-top: 1px solid var(--line);
+            padding: 0.45rem 0.65rem calc(0.55rem + env(safe-area-inset-bottom));
+            z-index: 1000;
+            box-shadow: 0 -14px 32px rgba(72, 41, 35, 0.08);
+        }
+        .bottom-nav-item {
+            text-decoration: none !important;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 0.16rem;
+            color: var(--muted) !important;
+            min-height: 58px;
+            border-radius: 16px;
+            font-weight: 500;
+        }
+        .bottom-nav-item.active {
+            color: var(--rose) !important;
+        }
+        .bottom-nav-item.active::before {
+            content: "";
+            width: 58px;
+            height: 4px;
+            border-radius: 999px;
+            background: var(--rose);
+            margin-top: -0.45rem;
+            margin-bottom: 0.16rem;
+        }
+        .bottom-nav-icon {
+            font-size: 1.45rem;
+            line-height: 1;
+        }
+        .bottom-nav-text {
+            font-size: 0.84rem;
+            line-height: 1;
         }
     }
-    @media (min-width: 900px) {
-        .bottom-nav {
-            display: none;
+    @media (min-width: 721px) {
+        .family-row-mobile:hover {
+            transform: translateY(-1px);
+            transition: transform .15s ease;
         }
     }
     </style>
@@ -595,6 +883,12 @@ if "page" not in st.session_state:
     st.session_state.page = "Convidados"
 if "side_filter" not in st.session_state:
     st.session_state.side_filter = "Todos"
+
+query_page = st.query_params.get("page")
+if isinstance(query_page, list):
+    query_page = query_page[0] if query_page else None
+if query_page in ["Convidados", "Famílias", "Padrinhos"]:
+    st.session_state.page = query_page
 
 with st.sidebar:
     st.markdown(
@@ -648,8 +942,7 @@ page_subtitle = {
     "Padrinhos": "Lista especial do casamento",
 }[st.session_state.page]
 
-st.title(page_title)
-st.caption(page_subtitle)
+render_header(page_title, page_subtitle, {"Convidados": "♡", "Famílias": "👥", "Padrinhos": "♡"}[st.session_state.page])
 
 if st.session_state.page == "Convidados":
     st.markdown('<div class="hero-card">', unsafe_allow_html=True)
@@ -734,41 +1027,21 @@ if st.session_state.page == "Convidados":
     st.markdown("</div>", unsafe_allow_html=True)
 
 elif st.session_state.page == "Famílias":
-    st.markdown(
-        f"""
-        <div class="soft-card">
-            <div style="display:flex; justify-content:space-around; gap:1rem; text-align:center;">
-                <div><div class="family-name">{family_count}</div><div class="family-sub">famílias</div></div>
-                <div style="width:1px; background:#e4d9d4;"></div>
-                <div><div class="family-name">{total_guests}</div><div class="family-sub">convidados</div></div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    search = st.text_input(
+    render_family_stats(family_count, total_guests)
+    search_cols = st.columns([5, 0.7], vertical_alignment="center")
+    search = search_cols[0].text_input(
         "Buscar família",
         placeholder="Buscar família",
         label_visibility="collapsed",
     ).strip().lower()
+    search_cols[1].markdown('<div class="search-helper">☰</div>', unsafe_allow_html=True)
     if not families:
         st.info("Nenhum convidado cadastrado.")
     else:
         for family, values in sorted(families.items()):
             if search and search not in family.lower():
                 continue
-            st.markdown(
-                f"""
-                <div class="family-row">
-                    <div>
-                        <div class="family-name">{family}</div>
-                        <div class="family-sub">{values['total']} convidado(s), {values['favorites']} favorito(s)</div>
-                    </div>
-                    <div class="pill">{values['total']}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            render_family_row(family, values)
 
 else:
     favorites = [
@@ -792,27 +1065,4 @@ else:
     for guest in favorites:
         guest_row(guest, compact=True)
 
-st.markdown('<div class="bottom-nav">', unsafe_allow_html=True)
-nav_cols = st.columns(3)
-nav_cols[0].button(
-    "Convidados",
-    use_container_width=True,
-    type="primary" if st.session_state.page == "Convidados" else "secondary",
-    on_click=set_page,
-    args=("Convidados",),
-)
-nav_cols[1].button(
-    "Famílias",
-    use_container_width=True,
-    type="primary" if st.session_state.page == "Famílias" else "secondary",
-    on_click=set_page,
-    args=("Famílias",),
-)
-nav_cols[2].button(
-    "Padrinhos",
-    use_container_width=True,
-    type="primary" if st.session_state.page == "Padrinhos" else "secondary",
-    on_click=set_page,
-    args=("Padrinhos",),
-)
-st.markdown("</div>", unsafe_allow_html=True)
+render_bottom_nav(st.session_state.page)

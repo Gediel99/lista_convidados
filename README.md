@@ -10,4 +10,3 @@ streamlit run app.py
 ```
 
 Os dados ficam salvos em `dados_casamento.json` na mesma pasta do app.
-"# lista_convidados" 
