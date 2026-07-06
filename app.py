@@ -202,6 +202,80 @@ def family_summary():
     return families
 
 
+def stable_key(value):
+    return uuid.uuid5(uuid.NAMESPACE_URL, str(value)).hex
+
+
+def family_matches(guest, family):
+    current = display_family_name((guest.get("family") or "Sem família").strip() or "Sem família")
+    return current == display_family_name(family)
+
+
+def rename_family(old_family, new_family):
+    new_family = display_family_name((new_family or "").strip() or "Sem família")
+    for guest in st.session_state.guests:
+        if family_matches(guest, old_family):
+            guest["family"] = new_family
+    st.session_state.selected_family = new_family
+    save_data()
+
+
+def add_guest_to_family(family, input_key):
+    name = st.session_state.get(input_key, "").strip()
+    if not name:
+        return
+    st.session_state.guests.insert(0, new_guest(name, display_family_name(family)))
+    st.session_state[input_key] = ""
+    save_data()
+
+
+def render_family_editor(family):
+    safe_family = html.escape(display_family_name(family))
+    key = stable_key(family)
+    members = [guest for guest in st.session_state.guests if family_matches(guest, family)]
+
+    with st.container(border=True):
+        st.markdown(
+            f"""
+            <div class="family-editor-title">Editar {safe_family}</div>
+            <div class="family-editor-sub">Altere o nome da família, adicione pessoas ou edite os convidados desse núcleo.</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        name_cols = st.columns([3, 1], vertical_alignment="bottom")
+        new_family_name = name_cols[0].text_input(
+            "Nome da família",
+            value=display_family_name(family),
+            key=f"family_rename_{key}",
+            placeholder="Ex.: Família Costa",
+        )
+        if name_cols[1].button("Salvar", key=f"save_family_{key}", type="primary", use_container_width=True):
+            rename_family(family, new_family_name)
+            st.rerun()
+
+        add_key = f"family_add_guest_{key}"
+        add_cols = st.columns([3, 1], vertical_alignment="bottom")
+        add_cols[0].text_input(
+            "Adicionar convidado nesta família",
+            key=add_key,
+            placeholder="Nome do convidado",
+        )
+        if add_cols[1].button("Adicionar", key=f"add_to_family_{key}", use_container_width=True):
+            add_guest_to_family(family, add_key)
+            st.rerun()
+
+        st.markdown(f"<div class='section-kicker'>{len(members)} convidados nesta família</div>", unsafe_allow_html=True)
+        for guest in members:
+            guest_row(guest, compact=True)
+
+        if st.button("Fechar edição", key=f"close_family_{key}", use_container_width=True):
+            st.session_state.selected_family = None
+            st.session_state.editing_guest_id = None
+            st.session_state.selected_guest_id = None
+            st.rerun()
+
+
 def guest_row(guest, compact=False):
     selected = st.session_state.get("selected_guest_id") == guest["id"]
     editing = st.session_state.get("editing_guest_id") == guest["id"]
@@ -371,26 +445,31 @@ def nav_href(page):
     return "?" + urllib.parse.urlencode({"page": page})
 
 
+def set_page(page):
+    st.session_state.page = page
+    st.session_state.selected_guest_id = None
+    st.session_state.editing_guest_id = None
+    st.query_params["page"] = page
+
+
 def render_bottom_nav(active_page):
     nav_items = [
         ("Convidados", "👥"),
         ("Famílias", "⌂"),
         ("Padrinhos", "♡"),
     ]
-    links = []
-    for label, icon in nav_items:
-        active = " active" if label == active_page else ""
-        links.append(
-            f'<a class="bottom-nav-item{active}" href="{nav_href(label)}">'
-            f'<span class="bottom-nav-icon">{icon}</span>'
-            f'<span class="bottom-nav-text">{label}</span>'
-            f'</a>'
-        )
-    st.markdown(f'<nav class="bottom-nav">{"".join(links)}</nav>', unsafe_allow_html=True)
-
-def set_page(page):
-    st.session_state.page = page
-    st.query_params["page"] = page
+    st.markdown('<div id="mobile-bottom-nav-marker"></div>', unsafe_allow_html=True)
+    nav_cols = st.columns(3)
+    for col, (label, icon) in zip(nav_cols, nav_items):
+        button_type = "primary" if label == active_page else "secondary"
+        if col.button(
+            f"{icon}\n{label}",
+            key=f"mobile_nav_{label}",
+            type=button_type,
+            use_container_width=True,
+        ):
+            set_page(label)
+            st.rerun()
 
 
 st.set_page_config(page_title="Lista do casamento", layout="wide")
@@ -701,6 +780,21 @@ st.markdown(
         color: var(--rose-dark);
         font-size: 1.25rem;
     }
+    .family-editor-title {
+        color: var(--ink);
+        font-family: 'Playfair Display', Georgia, serif;
+        font-size: 1.65rem;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+    }
+    .family-editor-sub {
+        color: var(--muted);
+        font-size: 0.95rem;
+        margin-bottom: 0.9rem;
+    }
+    #mobile-bottom-nav-marker {
+        display: none;
+    }
 
     @media (max-width: 720px) {
         .block-container {
@@ -818,12 +912,15 @@ st.markdown(
         .chevron {
             font-size: 1.8rem;
         }
-        .bottom-nav {
+        /* Menu inferior mobile feito com botões Streamlit.
+           Assim a navegação troca a tela dentro do app e não abre outra aba/navegador. */
+        div[data-testid="stElementContainer"]:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"],
+        .element-container:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"] {
             position: fixed;
             left: 0;
             right: 0;
             bottom: 0;
-            display: grid;
+            display: grid !important;
             grid-template-columns: repeat(3, 1fr);
             gap: 0;
             background: rgba(255,255,255,0.92);
@@ -833,43 +930,45 @@ st.markdown(
             z-index: 1000;
             box-shadow: 0 -14px 32px rgba(72, 41, 35, 0.08);
         }
-        .bottom-nav-item {
-            text-decoration: none !important;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 0.16rem;
-            color: var(--muted) !important;
+        div[data-testid="stElementContainer"]:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"] .stButton button,
+        .element-container:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"] .stButton button {
             min-height: 58px;
+            border: 0;
+            background: transparent;
+            box-shadow: none;
+            color: var(--muted);
+            font-weight: 600;
+            white-space: pre-line;
+            line-height: 1.25;
+            justify-content: center;
             border-radius: 16px;
-            font-weight: 500;
         }
-        .bottom-nav-item.active {
-            color: var(--rose) !important;
+        div[data-testid="stElementContainer"]:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"] .stButton button[kind="primary"],
+        .element-container:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"] .stButton button[kind="primary"] {
+            color: var(--rose);
+            background: transparent;
         }
-        .bottom-nav-item.active::before {
+        div[data-testid="stElementContainer"]:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"] .stButton button[kind="primary"]::before,
+        .element-container:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"] .stButton button[kind="primary"]::before {
             content: "";
+            position: absolute;
+            top: 0;
             width: 58px;
             height: 4px;
             border-radius: 999px;
             background: var(--rose);
-            margin-top: -0.45rem;
-            margin-bottom: 0.16rem;
-        }
-        .bottom-nav-icon {
-            font-size: 1.45rem;
-            line-height: 1;
-        }
-        .bottom-nav-text {
-            font-size: 0.84rem;
-            line-height: 1;
         }
     }
     @media (min-width: 721px) {
         .family-row-mobile:hover {
             transform: translateY(-1px);
             transition: transform .15s ease;
+        }
+        div[data-testid="stElementContainer"]:has(#mobile-bottom-nav-marker),
+        .element-container:has(#mobile-bottom-nav-marker),
+        div[data-testid="stElementContainer"]:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"],
+        .element-container:has(#mobile-bottom-nav-marker) + div[data-testid="stHorizontalBlock"] {
+            display: none !important;
         }
     }
     </style>
@@ -883,6 +982,8 @@ if "page" not in st.session_state:
     st.session_state.page = "Convidados"
 if "side_filter" not in st.session_state:
     st.session_state.side_filter = "Todos"
+if "selected_family" not in st.session_state:
+    st.session_state.selected_family = None
 
 query_page = st.query_params.get("page")
 if isinstance(query_page, list):
@@ -1038,10 +1139,32 @@ elif st.session_state.page == "Famílias":
     if not families:
         st.info("Nenhum convidado cadastrado.")
     else:
+        visible_families = []
         for family, values in sorted(families.items()):
             if search and search not in family.lower():
                 continue
+            visible_families.append((family, values))
+
+        for family, values in visible_families:
+            family_key = stable_key(family)
             render_family_row(family, values)
+            action_cols = st.columns([1, 1], vertical_alignment="center")
+            if action_cols[0].button("Editar família", key=f"edit_family_{family_key}", use_container_width=True):
+                st.session_state.selected_family = None if st.session_state.selected_family == family else family
+                st.session_state.selected_guest_id = None
+                st.session_state.editing_guest_id = None
+                st.rerun()
+            if action_cols[1].button("Adicionar pessoa", key=f"quick_add_family_{family_key}", use_container_width=True):
+                st.session_state.selected_family = family
+                st.session_state.selected_guest_id = None
+                st.session_state.editing_guest_id = None
+                st.rerun()
+
+            if st.session_state.selected_family == family:
+                render_family_editor(family)
+
+        if not visible_families:
+            st.info("Nenhuma família encontrada com esse filtro.")
 
 else:
     favorites = [
